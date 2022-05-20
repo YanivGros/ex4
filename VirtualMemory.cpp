@@ -29,8 +29,6 @@ uint32_t get_base_width() {
 
 uint64_t getPhysicalAddress(uint64_t address, uint64_t *retAddress);
 
-uint64_t get_offset(uint64_t i, uint64_t address);
-
 void clean_page(word_t adr);
 
 bool find_unused(word_t *frame_adr);
@@ -77,62 +75,118 @@ int VMwrite(uint64_t virtualAddress, word_t value) {
  * returns 0 on failure
  *
  */
-uint64_t getPhysicalAddress(uint64_t address, uint64_t *retAddress) {
-    
 
-    word_t adr = 0, n_adr;
-    PMread(get_offset(0, address), &n_adr);
-    for (uint64_t i = 0; i < TABLES_DEPTH - 1; ++i) {
-        if (n_adr == 0) {
-            if (find_unused(&n_adr)) {
-//                error
+uint64_t read_MSB(uint64_t number, uint64_t start, uint64_t end) {
+    return get_bytes(number, VIRTUAL_ADDRESS_WIDTH - end, VIRTUAL_ADDRESS_WIDTH - start);
+}
+
+
+uint64_t calc_cycle_dist(word_t page_path, word_t page_in) {
+    int dist = page_path - page_in;
+    uint64_t abs_dist = dist > 0 ? dist : -dist;
+    return abs_dist > (NUM_PAGES - abs_dist) ? abs_dist : NUM_PAGES - abs_dist;
+}
+
+void traversing(word_t cur_frame, word_t father, uint64_t depth, uint64_t frame_size,
+                word_t page_path,
+                word_t page_in,
+                word_t *max_frame,
+                word_t *frame_all_zero,
+                word_t *max_cycle_dist_frame, word_t *max_cycle_dist_page, uint64_t *max_cycle_dist) {
+    bool is_zero = true;
+    for (uint64_t i = 0; i < frame_size; i ++) {
+        word_t son_frame;
+        PMread(cur_frame * PAGE_SIZE + i, &son_frame);
+        if ((depth < TABLES_DEPTH) && (son_frame != 0)) {
+            is_zero = false;
+            if (*max_frame < son_frame) {
+                *max_frame = son_frame;
             }
-            PMrestore(n_adr, get_offset(i, address));// we get the page back
-            clean_page(n_adr); // might should be if page
-            PMwrite(adr * PAGE_SIZE + get_offset(i, address), n_adr);
-            adr = n_adr;
+            page_path = page_path << frame_size;
+            page_path += i;
+            traversing(son_frame, father, depth + 1, OFFSET_WIDTH,
+                       page_path,
+                       page_in,
+                       max_frame,
+                       frame_all_zero,
+                       max_cycle_dist_frame, max_cycle_dist_page, max_cycle_dist);
+
+        } else {
+            uint64_t cycle_dist = calc_cycle_dist(page_path, page_in);
+            if (cycle_dist > *max_cycle_dist) {
+                *max_cycle_dist = cycle_dist;
+                *max_cycle_dist_frame = cur_frame * PAGE_SIZE + i;
+                *max_cycle_dist_page = page_path;
+            }
+            return;
         }
-        PMread(adr, &n_adr);
+    }
+    if (is_zero && (cur_frame != father)) {
+        *frame_all_zero = cur_frame;
+    }
+}
+
+void crate_free_frame(word_t *free_frame, word_t page_in, word_t father, word_t father_address){
+
+}
+
+void handle_zero(word_t *free_frame, word_t page_in, word_t father) {
+    crate_free_frame();
+
+    word_t max_frame = 0, all_zero = 0, max_cycle_dist_frame = 0, max_cycle_dist_page = 0;
+    uint64_t max_cycle_dist = 0;
+    traversing(0, father, 0,
+               get_base_width(),
+               0, page_in,
+               &max_frame,
+               &all_zero,
+               &max_cycle_dist_frame, &max_cycle_dist_page, &max_cycle_dist);
+    if (all_zero) { //case 1
+        *free_frame = all_zero;
+
+        PMwrite(father * PAGE_SIZE + offset, *free_frame);
+        return;
+    }
+    if (max_frame + 1 < NUM_FRAMES) { //case2
+        *free_frame = max_frame + 1;
+
+        return;
+    }
+    // case 3
+    PMevict(max_cycle_dist_frame, max_cycle_dist_page);
+    *free_frame = max_cycle_dist_frame;
+}
+
+uint64_t getPhysicalAddress(uint64_t address, uint64_t *retAddress) {
+    address = 1302;
+//  101 0001 0110
+    word_t adr = 0, n_adr;
+    uint64_t start = VIRTUAL_ADDRESS_WIDTH - get_base_width(), end = VIRTUAL_ADDRESS_WIDTH;
+    uint64_t offset = get_bytes(address, start, end);
+    PMread(adr * PAGE_SIZE + offset, &n_adr);
+    for (int i = 0; i < TABLES_DEPTH - 1; ++i) {
+        if (n_adr == 0) {
+            handle_zero(&n_adr, address, adr);
+        }
         adr = n_adr;
+        end = start;
+        start = start - OFFSET_WIDTH;
+        offset = get_bytes(address, start, end);
+        PMread(adr * PAGE_SIZE + offset, &n_adr);
     }
-    return n_adr * PAGE_SIZE + get_offset(TABLES_DEPTH - 1, address);
-}
-
-bool find_unused(word_t *frame_adr) {
-    uint64_t frame_all_zeros, max_in_use_frame,  max_cyclic_distance_page,max_cyclic_distance_frame;
-
-    uint64_t res = traversing(&frame_all_zeros,
-                              &max_in_use_frame,
-                              &max_cyclic_distance_page,
-                              &max_cyclic_distance_frame);
-    if (frame_all_zeros) {
-        return frame_all_zeros;
-    } else if (max_in_use_frame < NUM_FRAMES) {
-        return max_in_use_frame;
-    } else {
-        PMevict(max_cyclic_distance_frame, max_cyclic_distance_page);
-        return max_cyclic_distance_frame;
-    }
-}
-
-/* clean the page from adr to adr + OFFSET_WIDTH
- *
- */
-void clean_page(word_t adr) {
-    for (int i = 0; i < OFFSET_WIDTH; ++i) {
-        PMwrite(adr + i, 0);
-    }
-}
-
-/*
- *  return the ith offset of address
- */
-uint64_t get_offset(uint64_t i, uint64_t address) {
-    if (i == 0) {
-        return get_bytes(address, 0, get_base_width());
-    }
-    return get_bytes(address, i * OFFSET_WIDTH, (i + 1) * OFFSET_WIDTH);
+    int a = 10;
 }
 
 
-// wrap if in case of failure
+
+//    address = 983040;
+////    1111 0000 0000 0000 0000
+//    uint32_t res_1 = get_base_width();
+//    uint32_t  res_2 = VIRTUAL_ADDRESS_WIDTH - get_base_width();
+//    uint32_t res_3 = read_MSB(address, 0, get_base_width());
+
+//    address = 983040;
+//    1111 0000 0000 0000 0000
+//    uint32_t res_1 = get_base_width();
+//    uint32_t  res_2 = VIRTUAL_ADDRESS_WIDTH - get_base_width();
+//    uint32_t res_3 = get_bytes(address, VIRTUAL_ADDRESS_WIDTH - get_base_width(), VIRTUAL_ADDRESS_WIDTH);

@@ -7,4 +7,4 @@ add_executable(ex4 main.cpp)
 
 add_executable(physical_memory PhysicalMemory.cpp PhysicalMemory.h)
 
-add_executable(ex_4_our SimpleTest.cpp VirtualMemory.h VirtualMemory.cpp)
+add_executable(ex_4_our SimpleTest.cpp VirtualMemory.h VirtualMemory.cpp PhysicalMemory.h PhysicalMemory.cpp)
