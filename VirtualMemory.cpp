@@ -94,7 +94,7 @@ void traversing(word_t cur_frame, word_t father, uint64_t depth, uint64_t frame_
                 word_t *frame_all_zero,
                 word_t *max_cycle_dist_frame, word_t *max_cycle_dist_page, uint64_t *max_cycle_dist) {
     bool is_zero = true;
-    for (uint64_t i = 0; i < frame_size; i ++) {
+    for (uint64_t i = 0; i < frame_size; i++) {
         word_t son_frame;
         PMread(cur_frame * PAGE_SIZE + i, &son_frame);
         if ((depth < TABLES_DEPTH) && (son_frame != 0)) {
@@ -126,7 +126,7 @@ void traversing(word_t cur_frame, word_t father, uint64_t depth, uint64_t frame_
     }
 }
 
-void crate_free_frame(word_t *free_frame, word_t page_in, word_t father, word_t father_address){
+void crate_free_frame(word_t *free_frame, word_t page_in, word_t father, word_t father_address) {
 
 }
 
@@ -157,22 +157,44 @@ void handle_zero(word_t *free_frame, word_t page_in, word_t father) {
     *free_frame = max_cycle_dist_frame;
 }
 
+void
+find_empty_frame(uint64_t address, word_t frame_adr, word_t &max_frame, word_t &all_zero, word_t &max_cycle_dist_frame,
+                 word_t &max_cycle_dist_page, uint64_t cur_father) {
+    uint64_t max_cycle_dist = 0;
+    traversing(0, frame_adr, 0,
+               get_base_width(),
+               0, address,
+               &max_frame,
+               &all_zero,
+               &max_cycle_dist_frame, &max_cycle_dist_page, &max_cycle_dist);
+}
+
 uint64_t getPhysicalAddress(uint64_t address, uint64_t *retAddress) {
     address = 1302;
 //  101 0001 0110
-    word_t adr = 0, n_adr;
+    word_t frame_adr = 0, new_frame_adr;
     uint64_t start = VIRTUAL_ADDRESS_WIDTH - get_base_width(), end = VIRTUAL_ADDRESS_WIDTH;
     uint64_t offset = get_bytes(address, start, end);
-    PMread(adr * PAGE_SIZE + offset, &n_adr);
+    uint64_t cur_adr = frame_adr * PAGE_SIZE + offset;
+    PMread(cur_adr, &new_frame_adr);
     for (int i = 0; i < TABLES_DEPTH - 1; ++i) {
-        if (n_adr == 0) {
-            handle_zero(&n_adr, address, adr);
+        if (new_frame_adr == 0) {
+            word_t max_frame, all_zero, max_cycle_dist_frame, max_cycle_dist_page;
+            find_empty_frame(address,
+                             frame_adr,
+                             max_frame,
+                             all_zero,
+                             max_cycle_dist_frame,
+                             max_cycle_dist_page,
+                             cur_adr);
+
         }
-        adr = n_adr;
+
+        frame_adr = new_frame_adr;
         end = start;
         start = start - OFFSET_WIDTH;
         offset = get_bytes(address, start, end);
-        PMread(adr * PAGE_SIZE + offset, &n_adr);
+        PMread(frame_adr * PAGE_SIZE + offset, &new_frame_adr);
     }
     int a = 10;
 }
