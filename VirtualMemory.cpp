@@ -28,7 +28,9 @@ uint32_t get_base_width() {
 // function add by us
 
 void getPhysicalAddress(uint64_t address, uint64_t *retAddress);
-
+void updateCyclic(word_t cur_frame,
+                  word_t page_path,
+                  word_t page_in, word_t *max_cycle_dist_frame, word_t *max_cycle_dist_page, uint64_t *max_cycle_dist, int i);
 
 
 /*
@@ -81,7 +83,8 @@ int VMwrite(uint64_t virtualAddress, word_t value) {
 uint64_t calc_cycle_dist(word_t page_path, word_t page_in) {
     int dist = page_path - page_in;
     uint64_t abs_dist = dist > 0 ? dist : -dist;
-    return abs_dist > (NUM_PAGES - abs_dist) ? abs_dist : NUM_PAGES - abs_dist;
+    uint64_t res = abs_dist < (NUM_PAGES - abs_dist) ? abs_dist : NUM_PAGES - abs_dist;
+    return res;
 }
 
 void traversing(word_t cur_frame, word_t father, uint64_t depth, uint64_t frame_size,
@@ -90,41 +93,48 @@ void traversing(word_t cur_frame, word_t father, uint64_t depth, uint64_t frame_
                 word_t *max_frame,
                 word_t *frame_all_zero,
                 word_t *max_cycle_dist_frame, word_t *max_cycle_dist_page, uint64_t *max_cycle_dist) {
+    if (*max_frame < cur_frame) {
+        *max_frame = cur_frame;
+    }
     if (depth == TABLES_DEPTH) {
         return;
     }
     bool is_zero = true;
-    if (*max_frame < cur_frame) {
-        *max_frame = cur_frame;
-    }
-    for (uint64_t i = 0; i < frame_size; i++) {
+    page_path = page_path << frame_size;
+    for (uint64_t i = 0; i < (1 << frame_size); i++) {
+        page_path ++;
         word_t son_frame;
         PMread(cur_frame * PAGE_SIZE + i, &son_frame);
-        if ((depth < TABLES_DEPTH) && (son_frame != 0)) {
+        if (son_frame != 0) {
             is_zero = false;
-            page_path = page_path << frame_size;
-            page_path += i;
-            traversing(son_frame, father, depth + 1, OFFSET_WIDTH,
+
+            if (depth == TABLES_DEPTH - 1){
+                updateCyclic(cur_frame, page_path, page_in, max_cycle_dist_frame, max_cycle_dist_page, max_cycle_dist, i);
+            }
+            traversing(son_frame, cur_frame, depth + 1, OFFSET_WIDTH,
                        page_path,
                        page_in,
                        max_frame,
                        frame_all_zero,
                        max_cycle_dist_frame, max_cycle_dist_page, max_cycle_dist);
 
-        } if (depth == TABLES_DEPTH - 1 && (son_frame != 0)) {
-            uint64_t cycle_dist = calc_cycle_dist(i + (page_path << frame_size) , page_in);
-            if (cycle_dist > *max_cycle_dist) {
-                *max_cycle_dist = cycle_dist;
-                *max_cycle_dist_frame = cur_frame * PAGE_SIZE + i;
-                *max_cycle_dist_page = page_path;
-            }
         }
     }
     if (is_zero && (cur_frame != father)) {
         *frame_all_zero = cur_frame;
     }
 }
+void updateCyclic(word_t cur_frame,
+                  word_t page_path,
+                  word_t page_in, word_t *max_cycle_dist_frame, word_t *max_cycle_dist_page, uint64_t *max_cycle_dist, int i){
+    uint64_t cycle_dist = calc_cycle_dist(page_path >>OFFSET_WIDTH , page_in);
+    if (cycle_dist > *max_cycle_dist) {
+        *max_cycle_dist = cycle_dist;
+        *max_cycle_dist_frame = cur_frame * PAGE_SIZE + i;
+        *max_cycle_dist_page = page_path;
+    }
 
+}
 
 
 
@@ -138,7 +148,6 @@ void initialiseFrame(word_t frame) {
 void find_new_frame(uint64_t cur_adr, uint64_t address, word_t frame_adr) {
     word_t max_frame = 0, all_zero = 0, max_cycle_dist_frame = 0, max_cycle_dist_page = 0;
     uint64_t max_cycle_dist = 0;
-
     traversing(0, frame_adr, 0,
                get_base_width(),
                0, address >> OFFSET_WIDTH,
